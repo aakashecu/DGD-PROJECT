@@ -24,7 +24,7 @@ pytesseract.pytesseract.tesseract_cmd = r"/usr/bin/tesseract"
 
 
 # Initialize OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 import streamlit as st
 from openai import OpenAI
@@ -71,11 +71,18 @@ def find_packing_codes(text):
 
 # ---------------- Load SOP DOCX ----------------
 def load_sop_text():
-    sop_path = "/home/ubuntu/jupyter_workspace/test/DGD MSDS/data/DGD AND MSDS CHECKING SOP.docx"
+    # SOP file must be inside your repo, e.g. ./data/
+    sop_path = os.path.join(os.path.dirname(__file__), "data", "DGD AND MSDS CHECKING SOP.docx")
+
+    if not os.path.exists(sop_path):
+        st.error(f"SOP file not found at: {sop_path}")
+        st.stop()
+
     doc = Document(sop_path)
-    return "\n".join([p.text for p in doc.paragraphs])
+    return "\n".join(p.text for p in doc.paragraphs)
 
 sop_text = load_sop_text()
+
 
 def extract_pdf_text_and_image_info(uploaded_file, dpi=300):
     """
@@ -967,43 +974,46 @@ if run_validation:
             st.stop()
 
 
-# ----------------- Deterministic signature override (REPLACEMENT) -----------------
-# Replace the previous override block with this exact code.
-try:
-    # get image-info from the DGD extractor
-    dgd_img_info = dgd_result.get("images_info", []) if isinstance(dgd_result, dict) else []
+# ----------------- Deterministic signature override (SAFE GUARDED) -----------------
+if run_validation and 'dgd_result' in locals():
+    try:
+        # get image-info from the DGD extractor
+        dgd_img_info = dgd_result.get("images_info", []) if isinstance(dgd_result, dict) else []
 
-    # pages where our extractor thinks there's an image-signature
-    pages_with_image_sig = [it["page"] for it in dgd_img_info if it.get("signature_detected")]
-    # pages where a label exists but no signature image was detected under it
-    label_but_no_image = [it["page"] for it in dgd_img_info if it.get("label_present") and not it.get("signature_detected")]
-    # pages where label present (any)
-    label_pages = [it["page"] for it in dgd_img_info if it.get("label_present")]
+        # pages where our extractor thinks there's an image-signature
+        pages_with_image_sig = [it["page"] for it in dgd_img_info if it.get("signature_detected")]
 
-    # Decide deterministically (ONLY image under label counts as signature present)
-    if pages_with_image_sig:
-        pages_str = ", ".join(map(str, pages_with_image_sig))
-        parsed["signature_check"] = {
-            "status": "Signature present (image)",
-            "details": f"Signature image detected on page(s): {pages_str}."
-        }
-    elif label_but_no_image:
-        pages_str = ", ".join(map(str, label_but_no_image))
-        parsed["signature_check"] = {
-            "status": "Signature missing",
-            "details": f"Signature label present but no signature image found under label on page(s): {pages_str}."
-        }
-    else:
-        # No label and no image signature detected — mark missing (we do NOT accept page text alone)
-        parsed["signature_check"] = {
-            "status": "Signature missing",
-            "details": "No signature label or signature image detected in the DGD. (Text-only occurrences are NOT accepted.)"
-        }
-except Exception:
-    # keep original LLM result if something goes wrong with override
-    pass
+        # pages where a label exists but no signature image was detected under it
+        label_but_no_image = [
+            it["page"] for it in dgd_img_info
+            if it.get("label_present") and not it.get("signature_detected")
+        ]
+
+        # Decide deterministically (ONLY image under label counts as signature present)
+        if pages_with_image_sig:
+            pages_str = ", ".join(map(str, pages_with_image_sig))
+            parsed["signature_check"] = {
+                "status": "Signature present (image)",
+                "details": f"Signature image detected on page(s): {pages_str}."
+            }
+
+        elif label_but_no_image:
+            pages_str = ", ".join(map(str, label_but_no_image))
+            parsed["signature_check"] = {
+                "status": "Signature missing",
+                "details": f"Signature label present but no signature image found under label on page(s): {pages_str}."
+            }
+
+        else:
+            parsed["signature_check"] = {
+                "status": "Signature missing",
+                "details": "No signature label or signature image detected in the DGD. (Text-only occurrences are NOT accepted.)"
+            }
+
+    except Exception:
+        # Never crash the app due to override logic
+        pass
 # ----------------- end deterministic override -----------------
-
 
 
 
